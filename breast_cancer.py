@@ -347,8 +347,7 @@ for col in num_cols:
 ## Left skew: Age, Survival Months
 
 df.columns
-train["Log_Node_Ex_to_Pos"] = np.log1p(train["Node_Ex_to_Pos"])
-train["Log_Regional_Node_Positive"] = np.log1p(train["Regional Node Positive"])
+
 # train["Sqrt_Regional_Node_Positive"] = np.sqrt(train["Regional Node Positive"])
 # train["Inv_Regional_Node_Positive"] = 1 / train["Regional Node Positive"]
 
@@ -362,13 +361,66 @@ g.tick_params(which="minor", length=4)
 plt.show(block=True)
 
 
-
 plt.figure(figsize=(9, 6))
-g = sns.distplot(x=train["Inv_Node_Ex_to_Pos"], kde=True, color="orange", hist_kws=dict(edgecolor="black", linewidth=2))
-g.set_title("Inv_Node_Ex_to_Pos")
+g = sns.distplot(x=np.log1p(train["Tumor Size"]), kde=True, color="orange", hist_kws=dict(edgecolor="black", linewidth=2))
+g.set_title("Log Tumor Size")
 g.xaxis.set_minor_locator(AutoMinorLocator(2))
 g.yaxis.set_minor_locator(AutoMinorLocator(2))
 g.tick_params(which="both", width=2)
 g.tick_params(which="major", length=7)
 g.tick_params(which="minor", length=4)
 plt.show(block=True)
+
+train["Log_Node_Ex_to_Pos"] = np.log1p(train["Node_Ex_to_Pos"])
+train["Log_Regional_Node_Positive"] = np.log1p(train["Regional Node Positive"])
+train["Log_Tumor_Size"] = np.log1p(train["Tumor Size"])
+
+num_cols = [col for col in train.columns if train[col].dtypes != "object"]
+cat_cols = [col for col in train.columns if train[col].dtypes == "object"]
+
+for col in num_cols:
+    fig = plt.figure(figsize=(8,6))
+    g = sns.distplot(x=train[col], kde=False, color="purple", hist_kws=dict(edgecolor="black", linewidth=2))
+    g.set_title("Variable: " + str(col))
+    g.xaxis.set_minor_locator(AutoMinorLocator(2))
+    g.yaxis.set_minor_locator(AutoMinorLocator(2))
+    g.tick_params(which="both", width=2)
+    g.tick_params(which="major", length=7)
+    g.tick_params(which="minor", length=4)
+    plt.show(block=True)
+
+train.drop(["Node_Ex_to_Pos", "Regional Node Positive", "Tumor Size"], axis=1, inplace=True)
+num_cols = [col for col in train.columns if train[col].dtypes != "object"]
+cat_cols = [col for col in train.columns if train[col].dtypes == "object"]
+train = one_hot_encoder(train, cat_cols, drop_first=True)
+
+
+test["Log_Node_Ex_to_Pos"] = np.log1p(test["Node_Ex_to_Pos"])
+test["Log_Regional_Node_Positive"] = np.log1p(test["Regional Node Positive"])
+test["Log_Tumor_Size"] = np.log1p(test["Tumor Size"])
+test.drop(["Node_Ex_to_Pos", "Regional Node Positive", "Tumor Size"], axis=1, inplace=True)
+num_cols = [col for cotest.columns if test[col].dtypes != "object"]
+cat_cols = [col for col in test.columns if test[col].dtypes == "object"]
+test = one_hot_encoder(test, cat_cols, drop_first=True)
+
+## MODELS
+X_train = train.drop("Status", axis=1)
+y_train = train["Status"]
+X_test = test.drop("Status", axis=1)
+y_test = test["Status"]
+
+from sklearn.linear_model import LogisticRegression
+from sklearn.model_selection import GridSearchCV, cross_val_score, cross_validate
+from sklearn.metrics import classification_report
+
+lr_model = LogisticRegression(random_state=42, max_iter=1000, class_weight="balanced").fit(X_train, y_train)
+
+cv_results = cross_validate(lr_model,
+                            X_train, y_train,
+                            cv=5,
+                            scoring=["accuracy", "precision", "recall", "f1"])
+
+cv_results['test_accuracy'].mean()
+cv_results['test_precision'].mean()
+cv_results['test_recall'].mean()
+cv_results["test_f1"].mean()
