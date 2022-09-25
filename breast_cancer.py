@@ -301,7 +301,28 @@ for col in cat_cols:
 
 stage_cols = [col for col in df.columns if "Stage" in col]
 
+for col in stage_cols:
+    fig = plt.figure(figsize=(6,7))
+    g = sns.countplot(x=df[col], hue=df["Status"], dodge=True,
+                    palette="viridis")
+    g.yaxis.set_minor_locator(AutoMinorLocator(2))
+    show_values(g)
+    g.tick_params(which="both", width=2)
+    g.tick_params(which="major", length=7)
+    g.tick_params(which="minor", length=4)
+    fig.savefig(str(col), dpi=300)
 
+for col in stage_cols:
+    temp_df = df.groupby(col)["Status"].value_counts(normalize=True).mul(100).rename("percent").reset_index()
+    fig = plt.figure(figsize=(6,7))
+    g = sns.barplot(x=temp_df[col], y=temp_df["percent"], hue=temp_df["Status"], dodge=False,
+                    palette="viridis", ci=None)
+    g.yaxis.set_minor_locator(AutoMinorLocator(2))
+    show_values(g)
+    g.tick_params(which="both", width=2)
+    g.tick_params(which="major", length=7)
+    g.tick_params(which="minor", length=4)
+    fig.savefig(str(col), dpi=300)
 ## Train_test_split to avoid data leakage when it comes to transformation
 
 train, test = train_test_split(df, test_size=.2, stratify=df.Status, random_state=26)
@@ -316,7 +337,7 @@ for col in stage_cols:
     g.tick_params(which="both", width=2)
     g.tick_params(which="major", length=7)
     g.tick_params(which="minor", length=4)
-    plt.show(block=True)
+    fig.savefig(str(col), dpi=300)
 
 # Stacked and standardized bar plot (dodge=False/True)
 for col in stage_cols:
@@ -329,7 +350,7 @@ for col in stage_cols:
     g.tick_params(which="both", width=2)
     g.tick_params(which="major", length=7)
     g.tick_params(which="minor", length=4)
-    plt.show(block=True)
+    fig.savefig(str(col), dpi=300)
 
 # Distributions
 for col in num_cols:
@@ -399,7 +420,7 @@ test["Log_Node_Ex_to_Pos"] = np.log1p(test["Node_Ex_to_Pos"])
 test["Log_Regional_Node_Positive"] = np.log1p(test["Regional Node Positive"])
 test["Log_Tumor_Size"] = np.log1p(test["Tumor Size"])
 test.drop(["Node_Ex_to_Pos", "Regional Node Positive", "Tumor Size"], axis=1, inplace=True)
-num_cols = [col for cotest.columns if test[col].dtypes != "object"]
+num_cols = [col for col in test.columns if test[col].dtypes != "object"]
 cat_cols = [col for col in test.columns if test[col].dtypes == "object"]
 test = one_hot_encoder(test, cat_cols, drop_first=True)
 
@@ -410,10 +431,10 @@ X_test = test.drop("Status", axis=1)
 y_test = test["Status"]
 
 from sklearn.linear_model import LogisticRegression
-from sklearn.model_selection import GridSearchCV, cross_val_score, cross_validate
-from sklearn.metrics import classification_report
+from sklearn.model_selection import GridSearchCV, cross_val_score, cross_validate, StratifiedKFold
+from sklearn.metrics import classification_report, accuracy_score, recall_score, precision_score, f1_score
 
-lr_model = LogisticRegression(random_state=42, max_iter=1000, class_weight="balanced").fit(X_train, y_train)
+lr_model = LogisticRegression(random_state=42, max_iter=1000, class_weight="balanced")
 
 cv_results = cross_validate(lr_model,
                             X_train, y_train,
@@ -424,3 +445,158 @@ cv_results['test_accuracy'].mean()
 cv_results['test_precision'].mean()
 cv_results['test_recall'].mean()
 cv_results["test_f1"].mean()
+
+## To take a different approach towards imbalance of the data in respect to churn
+## we may change the class_weight accordingly and search through best values for F1 score
+
+lr = LogisticRegression(max_iter=1000, random_state=26)
+
+#Setting the range for class weights
+weights = np.linspace(0.0,0.99,200)
+
+#Creating a dictionary grid for grid search
+param_grid = {'class_weight': [{0:x, 1:1.0-x} for x in weights]}
+
+#Fitting grid search to the train data with 5 folds
+gridsearch = GridSearchCV(estimator= lr,
+                          param_grid= param_grid,
+                          cv=StratifiedKFold(),
+                          n_jobs=-1,
+                          scoring='f1',
+                          verbose=2).fit(X_train, y_train)
+
+#Ploting the score for different values of weight
+fig = plt.figure(figsize=(12,8))
+weigh_data = pd.DataFrame({ 'score': gridsearch.cv_results_['mean_test_score'], 'weight': (1- weights)})
+sns.lineplot(weigh_data['weight'], weigh_data['score'])
+plt.xlabel('Weight for class 1')
+plt.ylabel('F1 score')
+plt.xticks([round(i/10,1) for i in range(0,11,1)])
+plt.title('Scoring for different class weights', fontsize=24)
+plt.show(block=True)
+fig.savefig("score_for_different_values", dpi=300)
+
+weigh_data.sort_values(by="score", ascending=False).iloc[0, :]
+
+lr = LogisticRegression(max_iter=1000, random_state=26, class_weight={0: .264, 1: .736}).fit(X_train, y_train)
+
+y_pred = lr.predict(X_test)
+
+print(f"Accuracy: {round(accuracy_score(y_pred, y_test), 3)}")
+print(f"Recall: {round(recall_score(y_pred,y_test),3)}")
+print(f"Precision: {round(precision_score(y_pred,y_test), 3)}")
+print(f"F1: {round(f1_score(y_pred,y_test), 3)}")
+
+from lightgbm import LGBMClassifier
+
+lgbm = LGBMClassifier(random_state=26)
+
+gridsearch = GridSearchCV(estimator= lgbm,
+                          param_grid= param_grid,
+                          cv=StratifiedKFold(),
+                          n_jobs=-1,
+                          scoring='f1',
+                          verbose=2).fit(X_train, y_train)
+
+#Ploting the score for different values of weight
+plt.figure(figsize=(12,8))
+weigh_data = pd.DataFrame({ 'score': gridsearch.cv_results_['mean_test_score'], 'weight': (1- weights)})
+sns.lineplot(weigh_data['weight'], weigh_data['score'])
+plt.xlabel('Weight for class 1')
+plt.ylabel('F1 score')
+plt.xticks([round(i/10,1) for i in range(0,11,1)])
+plt.title('Scoring for different class weights', fontsize=24)
+plt.show(block=True)
+
+weigh_data.sort_values(by="score", ascending=False).iloc[0, :]
+
+lgbm = LGBMClassifier(random_state=26, class_weight={0: .284, 1: .716}).fit(X_train, y_train)
+
+y_pred = lgbm.predict(X_test)
+
+print(f"Accuracy: {round(accuracy_score(y_pred, y_test), 3)}")
+print(f"Recall: {round(recall_score(y_pred,y_test),3)}")
+print(f"Precision: {round(precision_score(y_pred,y_test), 3)}")
+print(f"F1: {round(f1_score(y_pred,y_test), 3)}")
+
+lgbm_params = {"learning_rate": [0.01, 0.1, 0.2],
+               "n_estimators": [300, 500, 800, 1000],
+               "colsample_bytree": [0.3, 0.5, 0.7, 1]}
+
+lgbm_best_grid = GridSearchCV(lgbm, lgbm_params, cv=5, n_jobs=-1, verbose=True).fit(X_train, y_train)
+
+lgbm_final = lgbm.set_params(**lgbm_best_grid.best_params_, random_state=26).fit(X_train, y_train)
+
+y_pred = lgbm_final.predict(X_test)
+
+print(f"Accuracy: {round(accuracy_score(y_pred, y_test), 3)}")
+print(f"Recall: {round(recall_score(y_pred,y_test),3)}")
+print(f"Precision: {round(precision_score(y_pred,y_test), 3)}")
+print(f"F1: {round(f1_score(y_pred,y_test), 3)}")
+
+from sklearn.tree import DecisionTreeClassifier
+from sklearn.ensemble import RandomForestClassifier
+rf = RandomForestClassifier(random_state=26)
+
+gridsearch = GridSearchCV(estimator= rf,
+                          param_grid= param_grid,
+                          cv=StratifiedKFold(),
+                          n_jobs=-1,
+                          scoring='f1',
+                          verbose=2).fit(X_train, y_train)
+
+#Ploting the score for different values of weight
+plt.figure(figsize=(12,8))
+weigh_data = pd.DataFrame({ 'score': gridsearch.cv_results_['mean_test_score'], 'weight': (1- weights)})
+sns.lineplot(weigh_data['weight'], weigh_data['score'])
+plt.xlabel('Weight for class 1')
+plt.ylabel('F1 score')
+plt.xticks([round(i/10,1) for i in range(0,11,1)])
+plt.title('Scoring for different class weights', fontsize=24)
+plt.show(block=True)
+
+weigh_data.sort_values(by="score", ascending=False).iloc[0, :]
+
+rf = RandomForestClassifier(random_state=26, class_weight={0: .806, 1: .194}).fit(X_train, y_train)
+
+y_pred = rf.predict(X_test)
+
+print(f"Accuracy: {round(accuracy_score(y_pred, y_test), 3)}")
+print(f"Recall: {round(recall_score(y_pred,y_test),3)}")
+print(f"Precision: {round(precision_score(y_pred,y_test), 3)}")
+print(f"F1: {round(f1_score(y_pred,y_test), 3)}")
+
+rf.get_params()
+
+rf_params = {"max_depth": [3, 5, 8, 12, None],
+             "max_features": [3, 5, 7, 10, "sqrt"],
+             "min_samples_split": [8, 15, 20, 25],
+             "n_estimators": [300, 500, 800, 1000]}
+
+rf_best_grid = GridSearchCV(rf,
+                            rf_params,
+                            cv=5,
+                            n_jobs=-1,
+                            verbose=1).fit(X_train, y_train)
+
+rf_final = RandomForestClassifier(**rf_best_grid.best_params_, random_state=26).fit(X_train, y_train)
+
+y_pred = rf_final.predict(X_test)
+print(f"Accuracy: {round(accuracy_score(y_pred, y_test), 3)}")
+print(f"Recall: {round(recall_score(y_pred,y_test),3)}")
+print(f"Precision: {round(precision_score(y_pred,y_test), 3)}")
+print(f"F1: {round(f1_score(y_pred,y_test), 3)}")
+
+def plot_importance(model, features, num=len(X_test), save=False):
+    feature_imp = pd.DataFrame({'Value': model.feature_importances_, 'Feature': features.columns})
+    plt.figure(figsize=(10, 10))
+    sns.set(font_scale=1)
+    sns.barplot(x="Value", y="Feature", data=feature_imp.sort_values(by="Value",
+                                                                     ascending=False)[0:num])
+    plt.title('Features')
+    plt.tight_layout()
+    plt.show(block=True)
+    if save:
+        plt.savefig('importances.png')
+
+plot_importance(lgbm, X_test, 10, True)
