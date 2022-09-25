@@ -9,11 +9,12 @@ import numpy as np
 import seaborn as sns
 import missingno as msno
 import matplotlib
-matplotlib.use("Qt5Agg")
 from matplotlib import pyplot as plt
+matplotlib.use("Qt5Agg")
 from matplotlib.ticker import AutoMinorLocator
 from sklearn.feature_selection import mutual_info_regression
 from sklearn.preprocessing import MinMaxScaler, LabelEncoder, StandardScaler, RobustScaler
+from sklearn.model_selection import train_test_split
 
 
 pd.set_option('display.max_columns', None)
@@ -24,10 +25,6 @@ pd.set_option('display.float_format', lambda x: '%.3f' % x)
 ###################
 # FUNCTIONS
 ###################
-
-
-def standart_scaler(col_name):
-    return (col_name - col_name.mean()) / col_name.std()
 
 def check_df(dataframe, head=5):
     print("##################### Shape #####################")
@@ -229,6 +226,149 @@ def check_skew(df_skew, column):
     print("{}'s: Skew: {}, : {}".format(column, skew, skewtest))
     return
 
+def show_values(axs, orient="v", space=.01):
+    def _single(ax):
+        if orient == "v":
+            for p in ax.patches:
+                _x = p.get_x() + p.get_width() / 2
+                _y = p.get_y() + p.get_height() + (p.get_height()*0.01)
+                value = '{:.2f}'.format(p.get_height())
+                ax.text(_x, _y, value, ha="center")
+        elif orient == "h":
+            for p in ax.patches:
+                _x = p.get_x() + p.get_width() + float(space)
+                _y = p.get_y() + p.get_height() - (p.get_height()*0.5)
+                value = '{:.2f}'.format(p.get_width())
+                ax.text(_x, _y, value, ha="left")
+
+    if isinstance(axs, np.ndarray):
+        for idx, ax in np.ndenumerate(axs):
+            _single(ax)
+    else:
+        _single(axs)
+
 breast_cancer = pd.read_csv("_breast_cancer/Breast_Cancer.csv")
 df = breast_cancer.copy()
 
+check_df(df)
+df.info()
+
+df.rename(columns={"Reginol Node Positive":"Regional Node Positive",
+                   "T Stage ":"T Stage"}, inplace=True)
+df.isnull().any()
+
+
+##T0: No evidence of primary tumor. T1 (includes T1a, T1b, and T1c):
+# Tumor is 2 cm (3/4 of an inch) or less across. T2:
+# Tumor is more than 2 cm but not more than 5 cm (2 inches) across.
+# T3: Tumor is more than 5 cm across.
+
+##N2: Cancer has spread to 4 to 9 lymph nodes under the arm,
+# or cancer has enlarged the internal mammary lymph nodes.
+# N2a: Cancer has spread to 4 to 9 lymph nodes under the arm,
+# with at least one area of cancer spread larger than 2 mm.
+
+num_cols = [col for col in df.columns if df[col].dtypes != "object"]
+cat_cols = [col for col in df.columns if df[col].dtypes == "object"]
+
+df.head()
+df.Status.value_counts()
+le = LabelEncoder()
+
+df["Status"] = le.fit_transform(df["Status"])
+
+for col in num_cols:
+    target_summary_with_num(df, "Status", col)
+
+for col in cat_cols:
+    print("Variable: " + str(col))
+    target_summary_with_cat(df, "Status", col)
+
+df["Grade"].value_counts()
+
+df.drop(df.loc[(df["Grade"] == " anaplastic; Grade IV") & (df["differentiate"] == "Undifferentiated"), :].index,
+        inplace=True)
+
+df["Node_Ex_to_Pos"] = df["Regional Node Examined"] / df["Regional Node Positive"]
+
+sns.heatmap(df.corr(), vmin=-1, vmax=1, annot=True)
+plt.show()
+
+df.columns
+
+for col in cat_cols:
+    cat_summary(df, col, False)
+
+stage_cols = [col for col in df.columns if "Stage" in col]
+
+
+## Train_test_split to avoid data leakage when it comes to transformation
+
+train, test = train_test_split(df, test_size=.2, stratify=df.Status, random_state=26)
+
+# Count plot
+for col in stage_cols:
+    fig = plt.figure(figsize=(6,7))
+    g = sns.countplot(x=train[col], hue=train["Status"], dodge=True,
+                    palette="viridis")
+    g.yaxis.set_minor_locator(AutoMinorLocator(2))
+    show_values(g)
+    g.tick_params(which="both", width=2)
+    g.tick_params(which="major", length=7)
+    g.tick_params(which="minor", length=4)
+    plt.show(block=True)
+
+# Stacked and standardized bar plot (dodge=False/True)
+for col in stage_cols:
+    temp_df = train.groupby(col)["Status"].value_counts(normalize=True).mul(100).rename("percent").reset_index()
+    fig = plt.figure(figsize=(6,7))
+    g = sns.barplot(x=temp_df[col], y=temp_df["percent"], hue=temp_df["Status"], dodge=True,
+                    palette="viridis", ci=None)
+    g.yaxis.set_minor_locator(AutoMinorLocator(2))
+    show_values(g)
+    g.tick_params(which="both", width=2)
+    g.tick_params(which="major", length=7)
+    g.tick_params(which="minor", length=4)
+    plt.show(block=True)
+
+# Distributions
+for col in num_cols:
+    fig = plt.figure(figsize=(8,6))
+    g = sns.distplot(x=train[col], kde=False, color="purple", hist_kws=dict(edgecolor="black", linewidth=2))
+    g.set_title("Variable: " + str(col))
+    g.xaxis.set_minor_locator(AutoMinorLocator(2))
+    g.yaxis.set_minor_locator(AutoMinorLocator(2))
+    g.tick_params(which="both", width=2)
+    g.tick_params(which="major", length=7)
+    g.tick_params(which="minor", length=4)
+    plt.show(block=True)
+
+## Right skew: Tumor Size, Regional Node Examined, Regional Node Positive, Node_Ex_to_Pos
+## Left skew: Age, Survival Months
+
+df.columns
+train["Log_Node_Ex_to_Pos"] = np.log1p(train["Node_Ex_to_Pos"])
+train["Log_Regional_Node_Positive"] = np.log1p(train["Regional Node Positive"])
+# train["Sqrt_Regional_Node_Positive"] = np.sqrt(train["Regional Node Positive"])
+# train["Inv_Regional_Node_Positive"] = 1 / train["Regional Node Positive"]
+
+fig = plt.figure(figsize=(8, 6))
+g = sns.distplot(x=np.log1p(train["Node_Ex_to_Pos"]), kde=False, color="purple", hist_kws=dict(edgecolor="black", linewidth=2))
+g.xaxis.set_minor_locator(AutoMinorLocator(2))
+g.yaxis.set_minor_locator(AutoMinorLocator(2))
+g.tick_params(which="both", width=2)
+g.tick_params(which="major", length=7)
+g.tick_params(which="minor", length=4)
+plt.show(block=True)
+
+
+
+plt.figure(figsize=(9, 6))
+g = sns.distplot(x=train["Inv_Node_Ex_to_Pos"], kde=True, color="orange", hist_kws=dict(edgecolor="black", linewidth=2))
+g.set_title("Inv_Node_Ex_to_Pos")
+g.xaxis.set_minor_locator(AutoMinorLocator(2))
+g.yaxis.set_minor_locator(AutoMinorLocator(2))
+g.tick_params(which="both", width=2)
+g.tick_params(which="major", length=7)
+g.tick_params(which="minor", length=4)
+plt.show(block=True)
